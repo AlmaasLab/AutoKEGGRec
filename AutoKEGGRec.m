@@ -867,7 +867,7 @@ if recBeingBuilt
     ReactionNames2(find(deletionIndex)) = [];
     lowerbounds = [ones(1,length(equationList2))*-20];
     upperbounds = [ones(1,length(equationList2))*20];
-    [throwAwayText,consolidatedStruct] = evalc("createModel(ReactionNames2, ReactionNames2, ReactionFormulas, 'lowerBoundList', lowerbounds, 'upperBoundList', upperbounds);");
+    [throwAwayText,consolidatedStruct] = evalc(char("createModel(ReactionNames2, ReactionNames2, ReactionFormulas, 'lowerBoundList', lowerbounds, 'upperBoundList', upperbounds);"));
 
     %% Adding annotations to reactions
 
