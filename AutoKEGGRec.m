@@ -1,7 +1,7 @@
 function [ outputStruct ] = AutoKEGGRec( organismCodes, varargin )
 % 
 % Assembles one or more genome-scale metabolic reconstructions COBRA
-% structures based on KEGG as  which are output to workspace and can be
+% structures based on KEGG which are output to workspace and can be
 % written to file. Reconstructions can be for single organisms,
 % communities, or consolidated, i.e. the union of several organisms.
 % 
@@ -40,6 +40,7 @@ function [ outputStruct ] = AutoKEGGRec( organismCodes, varargin )
 % .. AUTHORS:
 %   - Emil Karlsen and Christian Schulz, April 2018 - Created
 %   - Christian Schulz, August 2018 - Added compound assembly and annotations + notes + changes in omitted output
+%   - Emil karlsen, March 2024 - Compatibility patch for KEGG API updates + various minor changes
 % 
 % EXAMPLES:
 % 
@@ -75,7 +76,6 @@ disp('This version of AutoKEGGRec is the published version, and might not be the
 disp('Please check the websites specified within the help function for the newest version.');
 pause(5)
 tic
-% warning('off','all')
 
 %% Input args
 
@@ -89,6 +89,7 @@ GenePlotFlag = false;
 HistogramFlag = false;
 OmittedDataFlag = false;
 DisconnectedReactionsFlag = false;
+DebugFlag = false;
 
 arguments=false;
 recBeingBuilt = false;
@@ -100,7 +101,7 @@ if length(char(organismCodes))<3
    error('Missing or wrong organism codes.')
 end
 
-KeyWords = {'ConsolidatedRec', 'SingleRecs', 'CommunityRec', 'writeSBML', 'OrgRxnGen', 'GenePlot', 'Histogram', 'OmittedData', 'DisconnectedReactions'};
+KeyWords = {'ConsolidatedRec', 'SingleRecs', 'CommunityRec', 'writeSBML', 'OrgRxnGen', 'GenePlot', 'Histogram', 'OmittedData', 'DisconnectedReactions', 'Debug'};
 %Check flags
 
 if numel(varargin) > 0
@@ -121,48 +122,53 @@ end
 
 
 if arguments
-   if isempty(varargin)
-       disp("Default settings: Consolidated reconstruction as output.")
-       ConsolidatedRecFlag = true;
-       recBeingBuilt = true;
-   else
-       disp("The selected flags:")
-       for argum=1:numel(varargin)
-           n = find(strcmp(KeyWords,varargin(argum)));
-           switch n
-               case 1
-                   ConsolidatedRecFlag = true;
-                   recBeingBuilt = true;
-                   disp("ConsolidatedRecflag")
-               case 2
-                   SingleRecsFlag = true;
-                   recBeingBuilt = true;
-                   disp("SingleRecsflag")
-               case 3
-                   CommunityRecFlag = true;
-                   recBeingBuilt = true;
-                   disp("CommunityRecflag")
-               case 4
-                   writeSBMLflag = true;
-                   disp("writeSBMLflag")
-               case 5
-                   OrgRxnGenFlag = true;
-                   disp("OrgRxnGenFlag")
-               case 6
-                   GenePlotFlag = true;
-                   disp("GenePlotFlag")
-               case 7
-                   HistogramFlag = true;
-                   disp("HistogramFlag")
-               case 8
-                   OmittedDataFlag = true;
-                   disp("OmittedDataFlag")
-               case 9
-                   DisconnectedReactionsFlag = true;
-                   disp("DisconnectedReactionsFlag")
-           end
-       end
-   end
+    if isempty(varargin)
+        disp("Default settings: Consolidated reconstruction as output.")
+        ConsolidatedRecFlag = true;
+        recBeingBuilt = true;
+    else
+        disp("The selected flags:")
+        for argum=1:numel(varargin)
+            n = find(strcmp(KeyWords,varargin(argum)));
+            switch n
+                case 1
+                    ConsolidatedRecFlag = true;
+                    recBeingBuilt = true;
+                    disp("ConsolidatedRecflag")
+                case 2
+                    SingleRecsFlag = true;
+                    recBeingBuilt = true;
+                    disp("SingleRecsflag")
+                case 3
+                    CommunityRecFlag = true;
+                    recBeingBuilt = true;
+                    disp("CommunityRecflag")
+                case 4
+                    writeSBMLflag = true;
+                    disp("writeSBMLflag")
+                case 5
+                    OrgRxnGenFlag = true;
+                    disp("OrgRxnGenFlag")
+                case 6
+                    GenePlotFlag = true;
+                    disp("GenePlotFlag")
+                case 7
+                    HistogramFlag = true;
+                    disp("HistogramFlag")
+                case 8
+                    OmittedDataFlag = true;
+                    disp("OmittedDataFlag")
+                case 9
+                    DisconnectedReactionsFlag = true;
+                    disp("DisconnectedReactionsFlag")
+                case 10
+                    DebugFlag = true;
+                    disp("DebugFlag")
+                    % Causes the annotation matrices to be written to file for inspection.
+                    % Particularly useful to check for changes in the KEGG API.
+            end
+        end
+    end
 else
     error('Bad arguments');
 end
@@ -175,11 +181,7 @@ end
 
 %% Initialization (defining variables etc.)
 
-try 
-    parpool;
-catch
-    disp("Parpool could not be started: it is unavailable or already running.")
-end
+apiRequestWaitTime = 0.1;
 
 options = weboptions('Timeout', 500);
 keggURL = "http://rest.kegg.jp/";
@@ -192,7 +194,7 @@ fprintf("\n \n");
 disp("KEGG organism codes:")
 disp(organismCodes)
 
-parfor i=1:nOrganisms
+for i=1:nOrganisms
     organismGenesToECURLs(i) = keggURL+"link/"+organismCodes(i)+"/ec";
 end
 fprintf("\n \n");
@@ -203,16 +205,30 @@ disp("Starting accessing the KEGG Database for the requested Organisms.")
 ecToRxnURL = keggURL+"link/ec/rn";
 rxnToMetURL = keggURL+"link/rn/cpd";
 
-%Retrieving reaction, enzyme and compound lists
-rxnList = strsplit(webread(keggURL+"list/rn", options));
-enzList = strsplit(webread(keggURL+"list/enzyme", options));
-metList = strsplit(webread(keggURL+"list/cpd", options));
+% Retrieving reaction, enzyme, and compound lists
+rxnList = cellstr(webread(keggURL+"list/reaction", options));
+enzList = cellstr(webread(keggURL+"list/enzyme", options));
+metList = cellstr(webread(keggURL+"list/compound", options));
 
+% Splitting into lines 
+rxnList = splitlines(rxnList);
+enzList = splitlines(enzList);
+metList = splitlines(metList);
 
-%Processing reaction, enzyme and compound lists (# to name)
-rxnList = rxnList(contains(rxnList,'rn:'));
-enzList = enzList(contains(enzList,'ec:'));
-metList = metList(contains(metList,'cpd:'));
+% Splitting lines by tab
+rxnList = split(rxnList, '	');
+enzList = split(enzList, '	');
+metList = split(metList, '	');
+
+% Keeping first element of each line
+rxnList = rxnList(:,1);
+enzList = enzList(:,1);
+metList = metList(:,1);
+
+% Adding prefixes to the KEGG IDs
+rxnList = strcat("rn:", rxnList);
+enzList = strcat("ec:", enzList);
+metList = strcat("cpd:", metList);
 
 nRxns = length(rxnList);
 nEnzs = length(enzList);
@@ -234,7 +250,6 @@ rxnToMet = cell(1);
 
 % Make an nRxns-by-2 matrix of strings with EC numbers and associated genes
 % for each organism, and retrieve enzyme-reaction and reaction-metabolite linkage
-
 
 for i=1:nOrganisms+2
     if i<=nOrganisms
@@ -277,7 +292,6 @@ for i=1:length(ecToRxn)
     rxnEnzMat(rxnPos,enzPos)=1;
 end
 
-
 %Building reaction-compound matrix
 rxnMetMat = zeros(length(rxnList),length(metList));
 for i=1:length(rxnToMet)
@@ -285,7 +299,6 @@ for i=1:length(rxnToMet)
     rxnPos = rxnRef(char(rxnToMet{i,2}));
     rxnMetMat(rxnPos,metPos)=1;
 end
-
 
 disp("Compound-to-reaction and reaction-to-enzyme matrices built. Starting organism-to-reaction matrix now.")
 
@@ -331,7 +344,6 @@ end
 % Rx2     -           G12
 % :
 
-
 rxnOrganismGeneMatrix = strings(nRxns,nOrganisms);
 rxnOrganismGeneMatrixCounter = zeros(nRxns,nOrganisms);
 
@@ -373,7 +385,6 @@ if GenePlotFlag
         geneCountsToPlot(max(find(geneCountsToPlot(:,org)~=0)),org)=0;
         geneCountToPlot = geneCountsToPlot(1:max(find(geneCountsToPlot(:,org)~=0)),org);
         bar(geneCountToPlot)
-%        bar(geneCounterList(1:15,org))
         xlabel(['Number of genes per reaction']) % x-axis label
         ylabel('Number of reactions') % y-axis label
         set(gca, 'YScale', 'log')
@@ -386,7 +397,6 @@ end
 if HistogramFlag
     figure;
     organismHistData = sum(rxnOrganismMatrix);
-%     hist(organismHistData(organismHistData>0));
     histogram(organismHistData(organismHistData>0));
     title(string('Number of Organisms (KEGG IDs: ' + strjoin(organismCodes,', ') + ') sharing the same reaction'))
     xlabel("Number of organisms sharing number of reactions")
@@ -396,7 +406,6 @@ if HistogramFlag
     xLims = xlim;
     set(histogramPlotHandle, 'xtick', 1:ceil(xLims(2)))
 end
-
 
 %% Getting all the reactions from KEGG according to matrix
 
@@ -410,18 +419,19 @@ if recBeingBuilt || OmittedDataFlag
     loadBarUpdatePoints = ceil(linspace(1,length(rxnsToBuildList)));
 
     downloadedData = cell(length(rxnsToBuildList));
-    parfor i=1:length(rxnsToBuildList)
-        downloadedData{i} = cellstr(webread(keggURL+"/get/"+rxnList(rxnsToBuildList(i)), options));
-        pause(1)
-        if ~isempty(find(loadBarUpdatePoints==i))
+    for i=1:length(rxnsToBuildList)
+        downloadedData{i} = cellstr(webread(keggURL+"get/"+rxnList(rxnsToBuildList(i)), options));
+        downloadedData{i} = replace(downloadedData{i},"///","");
+        pause(apiRequestWaitTime)
+        if ~isempty(find(loadBarUpdatePoints==i, 1))
             fprintf('\b|\n');
         end
     end
 
-    equationList = strings(1,length(rxnsToBuildList));
-    metaDataList = equationList;
-    metaDataDumpList = equationList;
-    reactionDumpList = equationList;
+    equation_list_all = strings(1,length(rxnsToBuildList));
+    metaDataList = equation_list_all;
+    metaDataDumpList = equation_list_all;
+    reactionDumpList = equation_list_all;
 
     glycanReactions = 0;
     nContainingReactions = 0;
@@ -450,7 +460,7 @@ if recBeingBuilt || OmittedDataFlag
                 nContainingReactions = nContainingReactions+1;
                 % Removing reactions containing polymers (double reactions)
             else
-                equationList(i) = replace(rxnEquation,"EQUATION    ","");
+                equation_list_all(i) = replace(rxnEquation,"EQUATION    ","");
                 numMovedReactions = numMovedReactions - 1;
                 metaDataList(i) = join(string(webRxnData),";");
                 %This way all the "same as suggar" , ... are sorted out, only
@@ -480,7 +490,7 @@ if recBeingBuilt || OmittedDataFlag
                 % comment field; They are added to the reconstruction, but they are
                 % marked within the attention field.
                 sugarReactions = sugarReactions + 1;
-                equationList(i) = replace(rxnEquation,"EQUATION    ","");
+                equation_list_all(i) = replace(rxnEquation,"EQUATION    ","");
                 metaDataList(i) = join(string(webRxnData),";");
                 metaDataList(i) = insertBefore(metaDataList(i),[";DEFINITION"],[";ATTENTION    The reaction contains a sugar!"]);
             elseif ~isempty(rxnEquation(contains(rxnEquation, 'n')))
@@ -493,7 +503,6 @@ if recBeingBuilt || OmittedDataFlag
                 % nA + (n-1)B <-> C + (n+1)A becomes
                 % A + B <-> C + A
                 % The original equation is stored in the comments.
-    %             disp("Found polymer reaction. Reaction is NOT stored in the reconstruction. See the reactionDumpList.")
                 polymerReactions = polymerReactions + 1;
                 rxnEquation1 = string(rxnEquation);
                 rxnEquation1 = strsplit(rxnEquation1);
@@ -540,8 +549,8 @@ if recBeingBuilt || OmittedDataFlag
                 metaDataDumpList(i) = insertBefore(metaDataDumpList(i),[";DEFINITION"],[";ATTENTION    The reaction is a polymer reaction. For the reconstruction, the polymerisation has been removed. The original reaction is stored!"]);
             else
                 % "Normal" reactions are put into the List
-                equationList(i) = replace(rxnEquation,"EQUATION    ","");
-                rxnEquation = equationList(i);
+                equation_list_all(i) = replace(rxnEquation,"EQUATION    ","");
+                rxnEquation = equation_list_all(i);
                 metaDataList(i) = join(string(webRxnData),";");
                 %Checking for equatic aberrations, ie. characters in
                 %biochemical equations that were not accounted for above.
@@ -555,9 +564,6 @@ if recBeingBuilt || OmittedDataFlag
                 end
             end
         end
-        %if mod(i,100)==0
-        %   fprintf("Reaction %d of %d has been implemented. \n", i, lengfordisp)
-        %end
         if ~isempty(find(loadBarUpdatePoints==i))
             fprintf('\b|\n');
         end
@@ -567,27 +573,21 @@ if recBeingBuilt || OmittedDataFlag
     time = toc;
     disp("All reactions needed have been fetched.")
     fprintf("\nTime so far running AutoKEGGRec: %.0f seconds.\n\n", time);
-%     fprintf("Number of redundant reactions within KEGG: \t \t \t \t \t \t %i \n", numGenReactions);
-%     fprintf("Number of reactions moved to other reaction IDs within KEGG: \t %i \n \n", numMovedReactions);
-%     fprintf("%i reactions include sugars. They are marked within the annotations in a new ATTENTION-field. \n", sugarReactions)
-%     fprintf("%i reactions include n in the reaction. They are removed and stored within the reactionDumpList for manual curation. \n", polymerReactions)
-%     fprintf("%i reactions include glycans. They are removed and stored within the reactionDumpList for manual curation. \n", glycanReactions)
-%     fprintf("%i reactions include n in the reaction and have a REMARK. They are removed and stored within the reactionDumpList for manual curation. \n", nContainingReactions)
-
+    
     %Reaction checking for double Compounds (e.g. C00029 + C00760 <=> C00015 +
     %C00760); Moving them into the reactionDumpList
     reactionsProducingTheirOwnSubstrate = 0;
-    for rxn=1:length(equationList)
+    for rxn=1:length(equation_list_all)
         onlycompounds = false;
-        cpdNames = split(equationList(rxn));   
+        cpdNames = split(equation_list_all(rxn));   
         for i=1:length(cpdNames)
             if length(char(cpdNames(i)))==6 && sum(count(cpdNames, cpdNames(i)))>1
                         onlycompounds = true;
             end
         end
         if onlycompounds
-            reactionDumpList(rxn) = equationList(rxn);
-            equationList(rxn) = "";
+            reactionDumpList(rxn) = equation_list_all(rxn);
+            equation_list_all(rxn) = "";
             metaDataDumpList(rxn) = metaDataList(rxn);
             metaDataList(rxn) = "";
             reactionsProducingTheirOwnSubstrate = reactionsProducingTheirOwnSubstrate + 1;
@@ -595,30 +595,28 @@ if recBeingBuilt || OmittedDataFlag
         end
     end
 
-
-%     fprintf("Number of reactions do have duplicate Compounds (e.g. C00181 + C02352 <=> C02352 + C00001): %i \n", reactionsProducingTheirOwnSubstrate);
-
     rxnKeggNamesList = string(rxnList(rxnsToBuildList));
 
 
     %% Removing the empty fields, that only the reactions stay within the matrix to not check for compounds again
 
-    deletionIndex = zeros(1,length(equationList));
-    equationList2 = equationList;
-    for i=1:length(equationList)
-        if length(char(equationList2(i)))<1
+    deletionIndex = zeros(1,length(equation_list_all));
+    equation_list_keep = equation_list_all;
+    for i=1:length(equation_list_all)
+        if length(char(equation_list_keep(i)))<1
             deletionIndex(i) = 1;
         end
     end
-%     fprintf("Number of reactions omitted so far (check omittedData!): \t \t %i \n", sum(deletionIndex));
-    
-    equationList2(find(deletionIndex)) = [];
+
+    % Removing reactions not to be kept
+    equation_list_keep(find(deletionIndex)) = [];
+
     %% Getting the Compound information from KEGG
     
     % Getting the compounds
     cpdlist = [];
-    for reac=1:length(equationList2)
-        reactemp = split(equationList2(reac));
+    for reac=1:length(equation_list_keep)
+        reactemp = split(equation_list_keep(reac));
         for cmpd=1:length(reactemp)
             if length(char(reactemp(cmpd))) == 6
                 cpdlist = [cpdlist, reactemp(cmpd)];
@@ -635,9 +633,10 @@ if recBeingBuilt || OmittedDataFlag
     fprintf('Progress: \n');
     fprintf(['\n' repmat('.',1,100) '\n\n']);
     loadBarUpdatePoints = ceil(linspace(1,length(cpdlist)));
-    parfor i=1:length(cpdlist)
+    for i=1:length(cpdlist)
         downloadedDataCPD{i} = cellstr(webread(keggURL+"/get/"+cpdlist(i), options));
-        pause(1)
+        downloadedDataCPD{i} = replace(downloadedDataCPD{i},"///","");
+        pause(apiRequestWaitTime)
         if ~isempty(find(loadBarUpdatePoints==i))
             fprintf('\b|\n');
         end
@@ -672,9 +671,9 @@ if recBeingBuilt || OmittedDataFlag
         end
         annotationsStrListCPD=strsplit(annotationsStrListCPD, "%$%");
         for inputelementinstringCPD=1:length(annotationsStrListCPD)
-            positionifannotation = strcmp(stringlisttosearchforCPD, annotationsStrListCPD(inputelementinstringCPD));
-            if sum(positionifannotation) == 1
-                CPDannotationMatrix(i, positionifannotation) = {annotationsStrListCPD(inputelementinstringCPD+1)};
+            position_of_annotation = strcmp(stringlisttosearchforCPD, annotationsStrListCPD(inputelementinstringCPD));
+            if sum(position_of_annotation) == 1
+                CPDannotationMatrix(i, position_of_annotation) = {annotationsStrListCPD(inputelementinstringCPD+1)};
             end
         end
     end
@@ -689,26 +688,23 @@ if recBeingBuilt || OmittedDataFlag
     genericCPDs = string(CPDannotationMatrix(find(string(CPDannotationMatrix(1:end,4))=="0")));
 
     % Identify reactions containing these generic compounds
-%     fprintf("Number of generic compounds: \t \t \t \t \t \t \t \t \t  %s \n", string(length(genericCPDs)));
     reactionCheckList = [];
-    for reac=1:length(equationList2)
-        reactemp = split(equationList2(reac));
+    for reac=1:length(equation_list_keep)
+        reactemp = split(equation_list_keep(reac));
         for cmpd=1:length(reactemp)
             if length(char(reactemp(cmpd))) == 6 && contains(reactemp(cmpd), genericCPDs)
-                reactionCheckList = [reactionCheckList, equationList2(reac)];
+                reactionCheckList = [reactionCheckList, equation_list_keep(reac)];
             end
         end
     end
     reactionCheckList = unique (reactionCheckList);
-%     fprintf("Number of reactions containing such compounds: \t \t \t \t \t %s \n", string(length(reactionCheckList)));
-
     % Cleaning the reaction list of these reactions and adding them to the
     % omitted reactions, adding a comment to the cleaned reactions, why
     % they have been moved
-    for cleanreac = 1:length(equationList)
-        if sum(strcmp(equationList(cleanreac), reactionCheckList)) == 1
-           reactionDumpList(cleanreac) =  string(equationList(cleanreac));
-           equationList(cleanreac) = "";
+    for cleanreac = 1:length(equation_list_all)
+        if sum(strcmp(equation_list_all(cleanreac), reactionCheckList)) == 1
+           reactionDumpList(cleanreac) =  string(equation_list_all(cleanreac));
+           equation_list_all(cleanreac) = "";
            metaDataDumpList(cleanreac) = metaDataList(cleanreac);
            if contains(metaDataDumpList(cleanreac), "ATTENTION")
                metaDataDumpList(cleanreac) = insertBefore(metaDataDumpList(cleanreac),[";DEFINITION"],[" Furthermore, this reaction contains a generic compound or a compound without mass in KEGG. Check the compounds carefully before adding reaction to model!"]);
@@ -719,18 +715,15 @@ if recBeingBuilt || OmittedDataFlag
         end
     end
 
-    % cleaning up the reaction list from the new "empty positions" and
-    % addepting the deletion Index
-    deletionIndex = zeros(1,length(equationList));
-    equationList2 = equationList;
-    for i=1:length(equationList)
-        if length(char(equationList2(i)))<1
+    % Removing reactions not to be kept from the reaction list
+    deletionIndex = zeros(1,length(equation_list_all));
+    equation_list_keep = equation_list_all;
+    for i=1:length(equation_list_all)
+        if length(char(equation_list_keep(i)))<1
             deletionIndex(i) = 1;
         end
     end
-
-    equationList2(find(deletionIndex)) = [];
-  
+    equation_list_keep(find(deletionIndex)) = [];
 
     %% Removing the empty fields, that only the reactions stay within the matrix
     deletionIndexDUMP = zeros(1,length(reactionDumpList));
@@ -833,8 +826,8 @@ if OmittedDataFlag
                     relevantannotation = 0;
                 end
             end
-            positionifannotation = strcmp(stringlisttosearchfor, containingmodules(inputelementinstring));
-            annotationMatrixdump(line, positionifannotation) = {relevantannotation};
+            position_of_annotation = strcmp(stringlisttosearchfor, containingmodules(inputelementinstring));
+            annotationMatrixdump(line, position_of_annotation) = {relevantannotation};
         end 
     end
     omittedrxns = struct();
@@ -851,30 +844,30 @@ if OmittedDataFlag
     end
 end
 
-pause(5)
+pause(3)
 
 %% Building consolidated reconstruction
 if recBeingBuilt
     disp("Building consolidated reconstruction.");
     pause(2)
-    llengthofannotationdata = length(metaDataList);
-    annotations=cellstr(reshape(metaDataList,[llengthofannotationdata,1]));
+    annotations=cellstr(reshape(metaDataList,[length(metaDataList),1]));
+
+    % Removing empty annotations
     annotations = annotations(~cellfun('isempty',annotations));
     
-    ReactionFormulas = cellstr(equationList2);
+    ReactionFormulas = cellstr(equation_list_keep);
     ReactionNames = cellstr(rxnKeggNamesList);
     ReactionNames2 = cellfun(@(x) x(1:end,4:9), ReactionNames, 'un',0);
     ReactionNames2(find(deletionIndex)) = [];
-    lowerbounds = [ones(1,length(equationList2))*-20];
-    upperbounds = [ones(1,length(equationList2))*20];
+    lowerbounds = [ones(1,length(equation_list_keep))*-20];
+    upperbounds = [ones(1,length(equation_list_keep))*20];
     [throwAwayText,consolidatedStruct] = evalc(char("createModel(ReactionNames2, ReactionNames2, ReactionFormulas, 'lowerBoundList', lowerbounds, 'upperBoundList', upperbounds);"));
 
     %% Adding annotations to reactions
 
+    stringlisttosearchfor = {'ENTRY', 'NAME', 'ATTENTION', 'DEFINITION', 'EQUATION', 'COMMENT', 'RCLASS', 'ENZYME', 'PATHWAY', 'MODULE', 'BRITE', 'ORTHOLOGY', 'DBLINKS', 'REFERENCE', 'RHEA:'};
     annotationsStrList=strings(1,length(annotations));
-    annotationMatrix = num2cell(zeros(length(annotations),13));
-    % annotationMatrix = cell(length(annotations),13);
-    stringlisttosearchfor = {'ENTRY', 'NAME', 'ATTENTION', 'DEFINITION', 'EQUATION', 'COMMENT', 'RCLASS', 'ENZYME', 'PATHWAY', 'ORTHOLOGY', 'DBLINKS', 'REFERENCE', 'RHEA:'};
+    annotationMatrix = num2cell(zeros(length(annotations),length(stringlisttosearchfor)));
 
     disp("Adding KEGG annotations to the reactions.")
     for line=1:length(annotations)
@@ -946,8 +939,8 @@ if recBeingBuilt
                     relevantannotation = 0;
                 end
             end
-            positionifannotation = strcmp(stringlisttosearchfor, containingmodules(inputelementinstring));
-            annotationMatrix(line, positionifannotation) = {relevantannotation};
+            position_of_annotation = strcmp(stringlisttosearchfor, containingmodules(inputelementinstring));
+            annotationMatrix(line, position_of_annotation) = {relevantannotation};
         end 
     end
 
@@ -956,35 +949,53 @@ if recBeingBuilt
             annotationMatrix(rxn,2) = cellstr("Name not available. KEGG ID: "+string(cellstr(string(annotationMatrix(rxn,1)))));
         end
     end
+
+    % Writing annotationMatrix to file for debug
+    if DebugFlag
+        writetable(cell2table(annotationMatrix), 'annotationMatrix.tsv', 'Delimiter', '\t')
+    end
     
     % COBRA supported fields according to https://github.com/opencobra/cobratoolbox/blob/master/docs/source/notes/COBRAModelFields.md
-	consolidatedStruct.rxnKeggID = cellstr(string(annotationMatrix(:,1)));
-	consolidatedStruct.rxnNames = cellstr(string(annotationMatrix(:,2)));
-    consolidatedStruct.rxnReferences = cellstr(string(annotationMatrix(:,12)));
-    consolidatedStruct.rxnECNumbers = cellstr(string(annotationMatrix(:,8)));
+    dynamic_index = strcmp(stringlisttosearchfor, "ENTRY");
+	consolidatedStruct.rxnKeggID = cellstr(string(annotationMatrix(:,dynamic_index)));
+    dynamic_index = strcmp(stringlisttosearchfor, "NAME");
+	consolidatedStruct.rxnNames = cellstr(string(annotationMatrix(:,dynamic_index)));
+    dynamic_index = strcmp(stringlisttosearchfor, "REFERENCE");
+    consolidatedStruct.rxnReferences = cellstr(string(annotationMatrix(:,dynamic_index)));
+    dynamic_index = strcmp(stringlisttosearchfor, "ENZYME");
+    consolidatedStruct.rxnECNumbers = cellstr(string(annotationMatrix(:,dynamic_index)));
 
-    consolidatedStruct.subSystems = cell(length(cellstr(string(annotationMatrix(:,9)))),1);
-    for rxn=1:length(cellstr(string(annotationMatrix(:,9))))
-        consolidatedStruct.subSystems{rxn} = cellstr(string(annotationMatrix(rxn,9)));
+    dynamic_index = strcmp(stringlisttosearchfor, "PATHWAY");
+    consolidatedStruct.subSystems = cell(length(cellstr(string(annotationMatrix(:,dynamic_index)))),1);
+    for rxn=1:length(cellstr(string(annotationMatrix(:,dynamic_index))))
+        consolidatedStruct.subSystems{rxn} = cellstr(string(annotationMatrix(rxn,dynamic_index)));
     end
 
     %COBRA not supported fields
-    consolidatedStruct.rxnAttention=cell(size(consolidatedStruct.rxns,1),1);
-    consolidatedStruct.rxnAttention = cellstr(string(annotationMatrix(:,3)));
-    consolidatedStruct.rxnDefinition=cell(size(consolidatedStruct.rxns,1),1);
-    consolidatedStruct.rxnDefinition = cellstr(string(annotationMatrix(:,4)));
-    consolidatedStruct.rxnEquation=cell(size(consolidatedStruct.rxns,1),1);
-    consolidatedStruct.rxnEquation = cellstr(string(annotationMatrix(:,5)));
-    consolidatedStruct.rxnComment=cell(size(consolidatedStruct.rxns,1),1);
-    consolidatedStruct.rxnComment = cellstr(string(annotationMatrix(:,6)));
-    consolidatedStruct.rxnRclass=cell(size(consolidatedStruct.rxns,1),1);
-    consolidatedStruct.rxnRclass = cellstr(string(annotationMatrix(:,7)));
-    consolidatedStruct.rxnOrthology=cell(size(consolidatedStruct.rxns,1),1);
-    consolidatedStruct.rxnOrthology = cellstr(string(annotationMatrix(:,10)));
-    consolidatedStruct.rxnDBLinks=cell(size(consolidatedStruct.rxns,1),1);
-    consolidatedStruct.rxnDBLinks = cellstr(string(annotationMatrix(:,11)));
-    consolidatedStruct.rxnRhea=cell(size(consolidatedStruct.rxns,1),1);
-    consolidatedStruct.rxnRhea = cellstr(string(annotationMatrix(:,13)));
+    dynamic_index = strcmp(stringlisttosearchfor, "ATTENTION");
+    consolidatedStruct.rxnAttention = cellstr(string(annotationMatrix(:,dynamic_index)));
+    dynamic_index = strcmp(stringlisttosearchfor, "DEFINITION");
+    consolidatedStruct.rxnDefinition = cellstr(string(annotationMatrix(:,dynamic_index)));
+    dynamic_index = strcmp(stringlisttosearchfor, "EQUATION");
+    consolidatedStruct.rxnEquation = cellstr(string(annotationMatrix(:,dynamic_index)));
+    dynamic_index = strcmp(stringlisttosearchfor, "COMMENT");
+    consolidatedStruct.rxnComment = cellstr(string(annotationMatrix(:,dynamic_index)));
+    dynamic_index = strcmp(stringlisttosearchfor, "RCLASS");
+    consolidatedStruct.rxnRclass = cellstr(string(annotationMatrix(:,dynamic_index)));
+    dynamic_index = strcmp(stringlisttosearchfor, "MODULE");
+    consolidatedStruct.rxnRhea = cellstr(string(annotationMatrix(:,dynamic_index)));
+    dynamic_index = strcmp(stringlisttosearchfor, "BRITE");
+    consolidatedStruct.rxnRhea = cellstr(string(annotationMatrix(:,dynamic_index)));
+    dynamic_index = strcmp(stringlisttosearchfor, "ORTHOLOGY");
+    consolidatedStruct.rxnOrthology = cellstr(string(annotationMatrix(:,dynamic_index)));
+    dynamic_index = strcmp(stringlisttosearchfor, "DBLINKS");
+    consolidatedStruct.rxnDBLinks = cellstr(string(annotationMatrix(:,dynamic_index)));
+    dynamic_index = strcmp(stringlisttosearchfor, "RHEA:");
+    consolidatedStruct.rxnRhea = cellstr(string(annotationMatrix(:,dynamic_index)));
+    dynamic_index = strcmp(stringlisttosearchfor, "BRITE");
+    consolidatedStruct.rxnBRITE = cellstr(string(annotationMatrix(:,dynamic_index)));
+    dynamic_index = strcmp(stringlisttosearchfor, "MODULE");
+    consolidatedStruct.rxnModule = cellstr(string(annotationMatrix(:,dynamic_index)));
 
     %% Adding annotations to the KEGG compounds
 
@@ -1012,6 +1023,10 @@ if recBeingBuilt
     consolidatedStruct.metStructure2D.node = cell(size(consolidatedStruct.mets,1),1);
     consolidatedStruct.metStructure2D.edge = cell(size(consolidatedStruct.mets,1),1);
     
+    if DebugFlag
+        % write CPDannotationMatrix to file
+        writetable(cell2table(CPDannotationMatrix), 'CPDannotationMatrix.tsv', 'Delimiter', '\t')
+    end
 
     for cpds=1:length(consolidatedStruct.mets)
         if sum(contains(string(CPDannotationMatrix(:, 1)),string(consolidatedStruct.metKeggID(cpds))))==1
@@ -1168,7 +1183,6 @@ if recBeingBuilt
         end
     end
 
-
     %% Finding which reactions remain for each organism
 
     singleOrganismRxns = cell(nOrganisms,1);
@@ -1256,7 +1270,7 @@ if recBeingBuilt
         end
     end
 end
-pause(5)
+pause(3)
 
 %% Building single reconstructions
 
@@ -1282,8 +1296,7 @@ if SingleRecsFlag || CommunityRecFlag
         temp1(2) = length(rxnsToRemove);
         singleOrganismStruct = removeRxns(singleOrganismStruct,rxnsToRemove);
         temp1(3) = length(singleOrganismStruct.rxns);
-%         fprintf("%i reactions before removal, %i reactions removed. Should be %i reactions remaining, %i reactions actually remaining. Diff: %i\n", temp1(1), temp1(2), temp1(1)-temp1(2), temp1(3), temp1(3)-(temp1(1)-temp1(2)));
-        
+
         % Adding gene and protein annotations
         singleOrganismStruct.genes = cellstr(consolidatedStruct.geneAnnotations.genes{org});
         singleOrganismStruct.rules = cellstr(consolidatedStruct.geneAnnotations.rules{org});
@@ -1428,8 +1441,7 @@ for recIt=1:length(sMatNames)
     %printing:
     if sMatNames(recIt) == "CommunityRec"
         sortedComponentSizes = sort(componentSizes,'descend');
-        fprintf("\tReactions in major components of the %-25s %5.2f%% \n", sMatNames(recIt)+":", 100*sum(sortedComponentSizes(1:nOrganisms))/sum(componentSizes));
-% %             
+        fprintf("\tReactions in major components of the %-25s %5.2f%% \n", sMatNames(recIt)+":", 100*sum(sortedComponentSizes(1:nOrganisms))/sum(componentSizes));           
         disconnectedRxns = false(length(rxnComponents),1);
         disconnectedComponents = true(length(componentSizes),1);
         for i=1:length(componentSizes)
@@ -1441,15 +1453,13 @@ for recIt=1:length(sMatNames)
             if disconnectedComponents(rxnComponents(i))
                 disconnectedRxns(i) = true;
             end
-        end
-% %         
+        end 
         networkData.disconnectedReactionIndexes = find(disconnectedRxns==true);
         networkData.percentageRxnsInMajorComponent = 100*sum(sortedComponentSizes(1:nOrganisms))/sum(componentSizes);
         networkData.numberRxnsInMajorComponent = sum(sortedComponentSizes(1:nOrganisms));
         communityStruct.networkData = networkData;
     else
         fprintf("\tReactions in major component of the %-26s %5.2f%% \n", sMatNames(recIt)+":", 100*max(componentSizes)/sum(componentSizes));
-% %         
         disconnectedRxns = false(length(rxnComponents),1);
         disconnectedComponents = true(length(componentSizes),1);
         for i=1:length(componentSizes)
@@ -1462,7 +1472,6 @@ for recIt=1:length(sMatNames)
                 disconnectedRxns(i) = true;
             end
         end
-% %         
         networkData.disconnectedReactionIndexes = find(disconnectedRxns==true);
         networkData.percentageRxnsInMajorComponent = 100*max(componentSizes)/sum(componentSizes);
         networkData.numberRxnsInMajorComponent = max(componentSizes);
@@ -1480,8 +1489,7 @@ for recIt=1:length(sMatNames)
     end
 end
 
-
-%% Write out reconstruction and close parpool
+%% Write out reconstruction(s) to file
 
 if writeSBMLflag
     format = 'sbml';
@@ -1657,51 +1665,22 @@ end
 
 time = toc;
 
-try 
-    delete(gcp('nocreate'));
-catch
-%     
-end
-
 %% Final output notes
-% fprintf("\n\n\n\n\n\n\n\n")
 fprintf("\n\n\nAutoKEGGRec summary:\n\n")
 fprintf("AutoKEGGRec completed its instructions in %.0f seconds. \n\n", time);
-% fprintf("AutoKEGGRec recieved %s organisms as input. \n", string(nOrganisms));
 fprintf("%-55s %10s\n", "Organisms received as input:", string(nOrganisms));
-% if GenePlotFlag
-%     fprintf("AutoKEGGRec created a plot of the genes per organism for each organism. \n");
-% end
-% if HistogramFlag
-%     fprintf("AutoKEGGRec created a histogram plot to show the nuber of shared reactions between species. \n")
-% end
 if recBeingBuilt || OmittedDataFlag
-%     fprintf("AutoKEGGRec assessed %d reactions for the reconstruction. \n", ;
     fprintf("%-55s %10d\n", "KEGG reactions assessed:", length(rxnsToBuildList));
-%     fprintf("%i reactions were redundant in KEGG, the original is potentually kept within the reconstcructions. \n", numGenReactions);
     fprintf("\t%-51s %10d\n", "Reactions marked as redundant:", numGenReactions);
-%     fprintf("%i reactions have been moved to other reaction IDs (potentually included) within KEGG. \n", numMovedReactions);
     fprintf("\t%-51s %10d\n", "Reactions marked as moved:", numMovedReactions);
-%     fprintf("%i reactions include glycan molecules without a corresponding C-compound. They are marked within the annotations in a new ATTENTION-field (Potentually included within the reconstruction). \n", sugarReactions  + nContainingReactions);
     fprintf("\t%-51s %10d\n", "Reactions containing glycans:", sugarReactions  + nContainingReactions);
-%     fprintf("%i reactions include n in the reaction equation. They are removed and stored within the omittedOutput for manual curation. \n", polymerReactions);
     fprintf("\t%-51s %10d\n", "Reactions involving polymerization:", polymerReactions);
-%     fprintf("%i reactions include glycans with a compound correspondant. They are not included but stored within the omittedOutput for manual curation purposes. \n", glycanReactions);
-%     fprintf("%d reactions do have duplicate Compounds (e.g. C00181 + C02352 <=> C02352 + C00001). They are moved to the omittedOutput as well. \n", reactionsProducingTheirOwnSubstrate);
     fprintf("\t%-51s %10d\n", "Reactions producing their own substrate:", reactionsProducingTheirOwnSubstrate);
-%     fprintf("AutoKEGGRec found %s unique Compounds. \n", string(length(cpdlist)));
     fprintf("%-55s %10d\n", "Unique compounds retrieved from KEGG:", length(cpdlist));
-%     fprintf("AutoKEGGRec identified %s generic compounds. Check these compounds stored in the omittedOutput. \n", string(length(genericCPDs)));
     fprintf("%-55s %10d\n", "Generic (massless) compounds identified:", length(genericCPDs));
-%     fprintf("AutoKEGGRec moved %s reactions containing generic compounds to ommited reactions. They are marked within the rxnAtention field. \n", string(length(reactionCheckList)));
     fprintf("%-55s %10d\n", "Reactions omitted for containing generic compounds:", length(reactionCheckList));
     fprintf("\n");
 end
-% if recBeingBuilt
-%     fprintf("Reconstruction(s) annotated according to the COBRA supported fields. \n");
-%     fprintf("Not supported fields can be saved within a .mat file in matlab. \n");
-%     fprintf("AutoKEGGRec added gene annotations for the reactions. These are per default all OR relationships. \n");
-% end
 if recBeingBuilt
     if SingleRecsFlag
         fprintf("Single-organism reconstructions created for all the input organisms.\n");
