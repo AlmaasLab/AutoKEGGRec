@@ -952,7 +952,7 @@ if recBeingBuilt
 
     % Writing annotationMatrix to file for debug
     if DebugFlag
-        writetable(cell2table(annotationMatrix), 'annotationMatrix.tsv', 'Delimiter', '\t')
+       writetable(cell2table(annotationMatrix), 'annotationMatrix.csv', 'Delimiter', '\t')
     end
     
     % COBRA supported fields according to https://github.com/opencobra/cobratoolbox/blob/master/docs/source/notes/COBRAModelFields.md
@@ -1025,7 +1025,7 @@ if recBeingBuilt
     
     if DebugFlag
         % write CPDannotationMatrix to file
-        writetable(cell2table(CPDannotationMatrix), 'CPDannotationMatrix.tsv', 'Delimiter', '\t')
+        writetable(cell2table(CPDannotationMatrix), 'CPDannotationMatrix.csv', 'Delimiter', '\t')
     end
 
     for cpds=1:length(consolidatedStruct.mets)
