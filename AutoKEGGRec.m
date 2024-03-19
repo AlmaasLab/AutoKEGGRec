@@ -198,7 +198,7 @@ for i=1:nOrganisms
     organismGenesToECURLs(i) = keggURL+"link/"+organismCodes(i)+"/ec";
 end
 fprintf("\n \n");
-disp("Starting accessing the KEGG Database for the requested Organisms.")
+disp("Starting accessing the KEGG Database for the requested organisms.")
 
 %Building URLs for retrieving enzyme-reaction and reaction-metabolite
 %linkage data.
@@ -864,7 +864,6 @@ if recBeingBuilt
     [throwAwayText,consolidatedStruct] = evalc(char("createModel(ReactionNames2, ReactionNames2, ReactionFormulas, 'lowerBoundList', lowerbounds, 'upperBoundList', upperbounds);"));
 
     %% Adding annotations to reactions
-
     stringlisttosearchfor = {'ENTRY', 'NAME', 'ATTENTION', 'DEFINITION', 'EQUATION', 'COMMENT', 'RCLASS', 'ENZYME', 'PATHWAY', 'MODULE', 'BRITE', 'ORTHOLOGY', 'DBLINKS', 'REFERENCE', 'RHEA:'};
     annotationsStrList=strings(1,length(annotations));
     annotationMatrix = num2cell(zeros(length(annotations),length(stringlisttosearchfor)));
@@ -1006,7 +1005,13 @@ if recBeingBuilt
     consolidatedStruct.metNotes = cell(size(consolidatedStruct.mets,1),1);
     consolidatedStruct.metChEBIID = cell(size(consolidatedStruct.mets,1),1);
     consolidatedStruct.metPubChemID = cell(size(consolidatedStruct.mets,1),1);
-    
+
+    consolidatedStruct.metFormulas(:) = cellstr("");
+    consolidatedStruct.metNames(:) = cellstr("");
+    consolidatedStruct.metNotes(:) = cellstr("");
+    consolidatedStruct.metChEBIID(:) = cellstr("");
+    consolidatedStruct.metPubChemID(:) = cellstr("");
+
     % COBRA not supported fields
     consolidatedStruct.metMass = cell(size(consolidatedStruct.mets,1),1);
     consolidatedStruct.metMolWeight = cell(size(consolidatedStruct.mets,1),1);
@@ -1060,10 +1065,10 @@ if recBeingBuilt
                         if length(char(string(CPDannotationMatrix(positionofCPD,cpdannoline)))) > 1
                             consolidatedStruct.metMass(cpds) = cellstr(CPDannotationMatrix(positionofCPD,cpdannoline));
                         else
-                            % This should never happen :D
-                            fprintf("This message should never appear while adding compound annotation to the model! Compound: %s, Massfield: %s (Should be NOT zero!)\n", string(consolidatedStruct.metKeggID(cpds)), string(CPDannotationMatrix(positionofCPD,cpdannoline)));
+                            % This should never happen
+                            fprintf("This message should never appear while adding compound annotation to the model! Compound: %s, Massfield: %s (Should not be zero)\n", string(consolidatedStruct.metKeggID(cpds)), string(CPDannotationMatrix(positionofCPD,cpdannoline)));
                             fprintf("Within the compound %s, something went wrong, since it appears to have no mass but is included into the model.... CHECK! \n", string(CPDannotationMatrix(positionofCPD,cpdannoline)));
-                            consolidatedStruct.metExactMass(cpds) = cellstr("Unknown - WTF?!");
+                            consolidatedStruct.metExactMass(cpds) = cellstr("Unknown - Unexpected behavior");
                         end
                     case 5
                         %MOL_WEIGHT
@@ -1179,7 +1184,7 @@ if recBeingBuilt
                 end
             end
         else
-            fprintf("This KEGG ID %s seem not to exist within the annotatoions downloaded from KEGG. Something went wrong, please check!! \n", string(consolidatedStruct.metKeggID(cpds)));
+            fprintf("This KEGG ID %s seem not to exist within the annotations downloaded from KEGG. Something went wrong, please check \n", string(consolidatedStruct.metKeggID(cpds)));
         end
     end
 
@@ -1195,19 +1200,19 @@ if recBeingBuilt
     end
 
     %% Gene and protein annotations
-    % ie. "model.genes", "model.rules", "model.geneNames",
+    % ie. "model.genes", "model.grRules", "model.geneNames",
     % "model.proteinNames" and "model.proteins"
 
     % Declaring different struct subfields for gene and protein annotations
 
     consolidatedStruct.geneAnnotations.genes = cell(nOrganisms,1);
-    consolidatedStruct.geneAnnotations.rules = cell(nOrganisms,1);
+    consolidatedStruct.geneAnnotations.grRules = cell(nOrganisms,1);
     consolidatedStruct.geneAnnotations.geneNames = cell(nOrganisms,1);
 
     consolidatedStruct.proteinAnnotations.proteinNames = cell(nOrganisms,1);
     consolidatedStruct.proteinAnnotations.proteins = cell(nOrganisms,1);
 
-    % Adding gene annotations and rules
+    % Adding gene annotations and grRules
 
     for org=1:nOrganisms
         rxnCounter = 0;
@@ -1217,13 +1222,13 @@ if recBeingBuilt
             end
         end
     
-        % Adding rules
-        consolidatedStruct.geneAnnotations.rules{org} = strings(rxnCounter,1);
+        % Adding grRules
+        consolidatedStruct.geneAnnotations.grRules{org} = strings(rxnCounter,1);
         for rxn=1:rxnCounter
-            consolidatedStruct.geneAnnotations.rules{org}(rxn) = rxnOrganismGeneMatrix(singleOrganismRxns{org}(rxn),org);
+            consolidatedStruct.geneAnnotations.grRules{org}(rxn) = rxnOrganismGeneMatrix(singleOrganismRxns{org}(rxn),org);
         end
     
-        % Adding genes; not all genes are necessarily part of rules!
+        % Adding genes; not all genes are necessarily part of grRules
         consolidatedStruct.geneAnnotations.genes{org} = strings(length(unique(string(organismGeneToECLists{org}(:,2)))),1);
         consolidatedStruct.geneAnnotations.geneNames{org} = strings(length(unique(string(organismGeneToECLists{org}(:,2)))),1);
 
@@ -1278,6 +1283,7 @@ if SingleRecsFlag || CommunityRecFlag
     disp("Building single reconstructions")
     singleStructs = struct();
     for org=1:nOrganisms
+        orgName = organismCodes(org);
         % Removing reactions
         singleOrganismStruct = struct(consolidatedStruct);
         rxnIndicesForRemoval = false(nRxns,1);
@@ -1299,7 +1305,8 @@ if SingleRecsFlag || CommunityRecFlag
 
         % Adding gene and protein annotations
         singleOrganismStruct.genes = cellstr(consolidatedStruct.geneAnnotations.genes{org});
-        singleOrganismStruct.rules = cellstr(consolidatedStruct.geneAnnotations.rules{org});
+        singleOrganismStruct.genes = cellfun(@(x) replace(x,orgName+":",""), singleOrganismStruct.genes, 'un',0); % Removing organism code from gene names
+        singleOrganismStruct.grRules = cellstr(consolidatedStruct.geneAnnotations.grRules{org});
         singleOrganismStruct.geneNames = cellstr(consolidatedStruct.geneAnnotations.geneNames{org});
         singleOrganismStruct.proteinNames = cellstr(consolidatedStruct.proteinAnnotations.proteinNames{org});
         singleOrganismStruct.proteins = cellstr(consolidatedStruct.proteinAnnotations.proteins{org});
@@ -1308,7 +1315,7 @@ if SingleRecsFlag || CommunityRecFlag
         singleOrganismStruct = rmfield(singleOrganismStruct,'proteinAnnotations');
         singleOrganismStruct = rmfield(singleOrganismStruct,'rxnGeneMat');
         % Adding structs to collection
-        singleStructs.(char(organismCodes(org))) = singleOrganismStruct;
+        singleStructs.(char(orgName)) = singleOrganismStruct;
     end
     fieldNames = fieldnames(singleStructs);
 end
@@ -1355,7 +1362,7 @@ if CommunityRecFlag
     for org=1:nOrganisms
         %adding reaction-length annotations
         updateInterval = rxnCounter:(rxnCounter-1+length(singleStructs.(fieldNames{org}).rxns));
-        communityStruct.rules(updateInterval) = cellstr(singleStructs.(fieldNames{org}).rules);
+        communityStruct.grRules(updateInterval) = cellstr(singleStructs.(fieldNames{org}).grRules);
         communityStruct.rxnNames(updateInterval) = singleStructs.(fieldNames{org}).rxnNames;
         communityStruct.rxnECNumbers(updateInterval) = singleStructs.(fieldNames{org}).rxnECNumbers;
         communityStruct.rxnReferences(updateInterval) = singleStructs.(fieldNames{org}).rxnReferences;
