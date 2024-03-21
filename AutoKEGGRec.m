@@ -40,7 +40,8 @@ function [ outputStruct ] = AutoKEGGRec( organismCodes, varargin )
 % .. AUTHORS:
 %   - Emil Karlsen and Christian Schulz, April 2018 - Created
 %   - Christian Schulz, August 2018 - Added compound assembly and annotations + notes + changes in omitted output
-%   - Emil karlsen, March 2024 - Compatibility patch for KEGG API updates + various minor changes
+%   - Emil Karlsen, March 2024 - Compatibility patch for KEGG API updates +
+%   various minor changes and updates
 % 
 % EXAMPLES:
 % 
@@ -72,8 +73,9 @@ function [ outputStruct ] = AutoKEGGRec( organismCodes, varargin )
 %
 %%
 
-disp('This version of AutoKEGGRec is the published version, and might not be the most recent.');
+disp('Running AutoKEGGRec...')
 disp('Please check the websites specified within the help function for the newest version.');
+disp('')
 pause(5)
 tic
 
@@ -307,14 +309,26 @@ disp("Compound-to-reaction and reaction-to-enzyme matrices built. Starting organ
 % organisms
 
 rxnOrganismMatrix = zeros(nOrganisms,nRxns);
+omittedECNumbers = strings(0);
 
 for i=1:nOrganisms
+    ECNumberIndexesToRemove = zeros(1,nOrganisms);
     for j=1:length(organismGeneToECLists{i})
-        reactions = find(rxnEnzMat(:,enzRef(char(cellstr(organismGeneToECLists{i}(j,1)))))>0);
-        for k=1:length(reactions)
-            rxnOrganismMatrix(i,rxnRef(rxnList{reactions(k)})) = 1;
+        try
+            reactions = find(rxnEnzMat(:,enzRef(char(cellstr(organismGeneToECLists{i}(j,1)))))>0);
+            for k=1:length(reactions)
+                rxnOrganismMatrix(i,rxnRef(rxnList{reactions(k)})) = 1;
+            end
+        catch
+            warning("AutoKEGGRec: EC number: "+cellstr(organismGeneToECLists{i}(j,1))+" not found in KEGG database.")
+            omittedECNumbers = [omittedECNumbers; cellstr(organismGeneToECLists{i}(j,1))];
+            % Marking the EC number from the list of EC numbers to be
+            % checked for reactions for removal
+            ECNumberIndexesToRemove(j) = 1;
         end
     end
+    % Removing the EC numbers that did not return any reactions
+    organismGeneToECLists{i}(find(ECNumberIndexesToRemove),:) = [];
 end
 
 disp("Matrices built.")
@@ -1633,6 +1647,7 @@ if OmittedDataFlag
     omittedOutput = struct();
     omittedOutput.(char("OmittedReactions")) = omittedrxns;
     omittedOutput.(char("OmittedCompounds")) = omittedCPDs;
+    omittedOutput.(char("omittedECNumbers")) = omittedECNumbers;
     outputStruct.omittedOutput = omittedOutput;
 end
 
